@@ -1,0 +1,47 @@
+version: "2"
+services:
+  # SQS Poller
+
+  sqs-poller:
+    build:
+      context: ./sqs-poller
+      dockerfile: Dockerfile
+
+    volumes:
+      - ~/.aws:/root/.aws
+    environment:
+      QUEUE_URL: https://sqs.eu-central-1.amazonaws.com/906407660701/xray-otel-bridge-XrayUdp-KddXz3qRmS3i
+      AWS_PROFILE: cc-sandbox
+      AWS_REGION: eu-central-1
+  # ADOT Collector
+  aws-ot-collector:
+    image: public.ecr.aws/aws-observability/aws-otel-collector:latest
+    # very slow when you build it first time locally!!!
+    # build:
+    # context: ../
+    # dockerfile: cmd/awscollector/Dockerfile
+    command: ["--config=/etc/otel-agent-config.yaml"]
+    environment:
+      - AWS_REGION=eu-central-1
+      - HONEYCOMB_API_KEY={HONEYCOMB_API_KEY}
+
+      # Either uncomment and define these:
+      #
+      # - AWS_PROFILE=<profile>
+      # - AWS_ACCESS_KEY_ID=<to_be_added>
+      # - AWS_SECRET_ACCESS_KEY=<to_be_added>
+      #
+      # Or define a profile available in your shared credentials file
+      #
+      - AWS_PROFILE=cc-sandbox
+
+    volumes:
+      - ./collector-config.yaml:/etc/otel-agent-config.yaml
+      # - ~/.aws:/home/aoc/.aws
+    ports:
+      - "1777:1777" # pprof extension
+      - "55679:55679" # zpages extension
+      - "13133" # health_check
+      # xray reciever udp port
+      - "2000:2000/udp"
+      - "2000:2000"

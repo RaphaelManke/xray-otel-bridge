@@ -1,0 +1,93 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Description: nodejs-example-telemetry-api-extension
+
+Resources:
+  NodejsExampleTelemetryApiExtensionLayer:
+    Type: AWS::Serverless::LayerVersion
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      LayerName: nodejs-example-telemetry-api-extension-layer
+      ContentUri: .
+      CompatibleRuntimes:
+        - nodejs20.x
+      LicenseInfo: MIT-0
+      RetentionPolicy: Delete
+
+  NodejsExampleTelemetryApiDemoFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: nodejs-example-telemetry-api-demo-function
+      CodeUri: function/
+      Handler: index.handler
+      Runtime: nodejs20.x
+      MemorySize: 256
+      Timeout: 5
+      Tracing: Active
+      Layers:
+        - !Ref NodejsExampleTelemetryApiExtensionLayer
+        - !Sub arn:aws:lambda:${AWS::Region}:094274105915:layer:AWSLambdaPowertoolsTypeScriptV2:12
+      Environment:
+        Variables:
+          # DISPATCH_POST_URI: <enter the external url to dispatch telemetry to>
+          DISPATCH_MIN_BATCH_SIZE: 10
+          AWS_XRAY_DAEMON_ADDRESS: localhost:8082
+          AWS_XRAY_DEBUG_MODE: "true"
+          XRAYTRACEIDS_QUEUE_NAME: !GetAtt XrayTraceIds.QueueName
+          XRAYTRACEIDS_QUEUE_ARN: !GetAtt XrayTraceIds.Arn
+          XRAYTRACEIDS_QUEUE_URL: !Ref XrayTraceIds
+          XRAYUDP_QUEUE_NAME: !GetAtt XrayUdp.QueueName
+          XRAYUDP_QUEUE_ARN: !GetAtt XrayUdp.Arn
+          XRAYUDP_QUEUE_URL: !Ref XrayUdp
+      Policies:
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt XrayUdp.QueueName
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt XrayTraceIds.QueueName
+  XrayTraceIds:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 345600
+  XrayUdp:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 345600
+  XrayPoller:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: !Sub
+        - Stack ${AWS::StackName} Function ${ResourceName}
+        - ResourceName: XrayPoller
+      CodeUri: x-ray-poller
+      Handler: index.handler
+      Runtime: nodejs20.x
+      MemorySize: 3008
+      Timeout: 30
+      Tracing: Active
+      Events:
+        XrayTraceIds:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt XrayTraceIds.Arn
+            BatchSize: 1
+      Environment:
+        Variables:
+          XRAYUDP_QUEUE_NAME: !GetAtt XrayUdp.QueueName
+          XRAYUDP_QUEUE_ARN: !GetAtt XrayUdp.Arn
+          XRAYUDP_QUEUE_URL: !Ref XrayUdp
+      Policies:
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt XrayUdp.QueueName
+        - Statement:
+            Effect: Allow
+            Action:
+              - xray:BatchGetTraces
+            Resource: "*"
+      Architectures:
+        - arm64
+  XrayPollerLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${XrayPoller}

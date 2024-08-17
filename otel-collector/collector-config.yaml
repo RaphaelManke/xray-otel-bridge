@@ -1,0 +1,24 @@
+receivers:
+  awsxray:
+    transport: udp
+
+# exporters:
+#   awsxray:
+#     region: "us-west-2"
+exporters:
+  logging:
+    loglevel: debug
+  # otlp:
+  #   # endpoint: "api.honeycomb.io:443" # US instance
+  #   endpoint: "api.eu1.honeycomb.io:443" # EU instance
+  #   headers:
+  #     "x-honeycomb-team": ${env:HONEYCOMB_API_KEY}
+  #     "x-honeycomb-dataset": "otel-xray"
+
+service:
+  extensions:
+  pipelines:
+    traces:
+      receivers: [awsxray]
+      # exporters: [logging, otlp]
+      exporters: [logging]
