@@ -1,73 +1,76 @@
-# Example Telemetry API Extension in Nodejs
+# AWS XRay to OpenTelemetry Bridge
 
-The provided code sample demonstrates how to get a basic Telemetry API extension written in Nodejs up and running.
+This project is a bridge between AWS XRay and OpenTelemetry. It allows you to export traces from AWS XRay to OpenTelemetry.
 
-> This is a simple example extension to help you start investigating the Lambda Telemetry API. This example code is not production ready. Use it with your own discretion after testing thoroughly.
+## What is this project about?
 
-This sample extension: 
-1. Registers the extension with Lambda Extensions API (see `nodejs-example-telemetry-api-extension/extensions-api.js`)
-2. Starts a local HTTP server to receive incoming telemetry events from the Telemetry API (see `nodejs-example-telemetry-api-extension/telemetry-listener.js`)
-3. Subscribes to the Telemetry API to start receiving incoming telemetry events (see `nodejs-example-telemetry-api-extension/telemetry-api.js`)
-4. Receives telemetry events, batches them, and dispatches to a pre-defined URI via POST requests (see `nodejs-example-telemetry-api-extension/telemetry-dispatcher.js`)
+This project is a Proof-of-Concept (PoC) to demonstrate how to export traces from AWS XRay to OpenTelemetry. It is a bridge that reads traces from AWS XRay and sends them to OpenTelemetry Collector.
 
-![](sample-extension-seq-diagram.png)
+The reason for the project is that currently there is a high penalty in regards of cold start time (600-800 ms added) when using OpenTelemetry (e.g. ADOT) in AWS Lambda. This is because OpenTelemetry requires a lot of dependencies to be loaded and initialized.
 
-Note that Step 4 is asynchronous in nature. The functions is thawed to process the incoming event, and new telemetry might arrive either before or after dispatching existing telemetry. In case of the latter, the newly arrived telemetry will be kept in the telemetry queue and dispatched when processing next event. Depending on buffering configuration you pass to the Telemetry API during subscription, you might get either zero, one, or multiple requests from Telemetry API to the telemetry listener in a single function invocation. 
+On the other hand AWS XRay is a service that is already integrated with AWS Lambda and an instrumentation with tools like Powertools for AWS Lambda is very easy to do.
 
-The code is heavily instrumented with logs so you'll be able to see the Telemetry API extension lifecycle messages as you're learning to implement one. 
+Besides the cold start time the traces collected by AWS XRay have more information than the traces collected by OpenTelemetry. For example, AWS XRay traces have segments(spans in OpenTelemetry) that are including the AWS services itself like the AWS Lambda service interacting with the actual Lambda instance or fully managed services like the Api Gateway which only emit Xray traces/segments.
 
-## Build package and dependencies
+In the Opentelemetry world you only have segments starting on a sender and ending on a receiver. This means that you will not see the AWS Lambda service in the trace.
 
-There are two major components to this sample:
+But doing observability with AWS XRay alone results in a vendor lock-in and limits you to the capabilities of AWS XRay. Alternative Observability solutions like Honeycomb, Dash0, Baselime, etc. are not supporting XRay traces natively. They only support OpenTelemetry.
 
-* `./extensions/` - This directory should be extracted to `/opt/extensions` where the Lambda platform will scan for executables to launch extensions
-* `./nodejs-example-telemetry-api-extension/` - This directory should be extracted to `/opt/nodejs-example-telemetry-api-extension`, which is referenced by the `./extensions/nodejs-example-telemetry-api-extension` executable and includes a Nodejs executable along with all of its necessary dependencies.
+By using this bridge, you can use AWS XRay to collect traces and send them to OpenTelemetry Collector, which can then be used to export traces to other systems.
 
-Install the extension dependencies locally, which will be mounted along with the extension code.
+## How it works
+
+The bridge is pulling traces from AWS XRay using the AWS SDK.
+The Result is then send via teh UDP protocol to the OpenTelemetry Collector.
+The Collector is running with the official XRay receiver.
+This XRay reciever is able to receive traces/segments in XRay format and convert them to OpenTelemetry format.
+Finally the traces are send to the configured backend using the collector exporter.
+
+The bridge is triggered either periodically or by listening to messages on a SQS queue.
+
+## Architecture Diagrams
+
+![Architecture](./architecture.png)
+
+![crawlers](./crawler.png)
+
+## How to use it
+
+### Prerequisites
+
+- Docker
+- Node.js
+- AWS Account
+- AWS CLI
+- AWS SAM CLI
+
+### Steps
+
+1. Clone the repository
+
+2. Install the dependencies
+
 ```bash
-cd nodejs-example-logs-api-extension
-chmod +x index.js
+cd nodejs-example-telemetry-api-extension
 npm install
-cd ..
 ```
 
-## Layer Setup Process
-The extension .zip file should contain a root directory called `extensions/`, where the extension executables are located, and another root directory called `nodejs-example-telemetry-api-extensions/`, where the core logic of the extension and its dependencies are located. 
-
-Creating zip package for the extension:
+3. Deploy example function
 
 ```bash
-chmod +x extensions/nodejs-example-telemetry-api-extension
-zip -r extension.zip ./nodejs-example-telemetry-api-extension
-zip -r extension.zip ./extensions
+aws sam deploy
 ```
 
-Publish a new layer using the `extension.zip` using below command. The output should provide you with a layer ARN. 
+4. Set the SQS queue URL in the docker compose file `./otel-collector/docker-compose.yml`
+
+5. Start the OpenTelemetry Collector
 
 ```bash
-aws lambda publish-layer-version \
-    --layer-name "nodejs-example-telemetry-api-extension" \
-    --zip-file  "fileb://extension.zip"
+cd otel-collector
+docker-compose up
 ```
 
-Note the `LayerVersionArn` that is produced in the output. eg. 
+6. Invoke the function
 
-```
-LayerVersionArn: arn:aws:lambda:<region>:123456789012:layer:<layerName>:1
-```
-
-Add the newly created layer version to a Node.js runtime Lambda function.
-
-```bash
-aws lambda update-function-configuration 
-    --function-name <your function name> 
-    --layers <layer arn>
-```
-
-## Function Invocation and Extension Execution
-
-Configure the extension by setting below environment variables
-
-* `DISPATCH_POST_URI` - the URI you want telemetry to be posted to. If not specified you will still be able to observe extension work via produced logs in CloudWatch, but telemetry events will be discarded. 
-* `DISPATCH_MIN_BATCH_SIZE` - optimize dispatching telemetry by telling the dispatcher how many log events you want it to batch. On function invoke the telemetry will be dispatched to `DISPATCH_POST_URI` only if number of log events collected so far is greater than `DISPATCH_MIN_BATCH_SIZE`. On function shutdown the telemetry will be dispatched to `DISPATCH_POST_URI` regardless of how many log events were collected so far. 
-
+See the logs of the OpenTelemetry Collector to see the traces.
+If you have an OpenTelemetry backend you can configure the exporter in the `otel-collector/collector-config.yaml` file.

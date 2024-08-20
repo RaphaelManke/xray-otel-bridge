@@ -10,7 +10,7 @@ services:
     volumes:
       - ~/.aws:/root/.aws
     environment:
-      QUEUE_URL: https://sqs.eu-central-1.amazonaws.com/906407660701/xray-otel-bridge-XrayUdp-KddXz3qRmS3i
+      QUEUE_URL: <queue_url>
       AWS_PROFILE: cc-sandbox
       AWS_REGION: eu-central-1
   # ADOT Collector
